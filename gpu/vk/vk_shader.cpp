@@ -53,6 +53,7 @@
 #include "vk_internal.h"
 #include "vk_jobs.h"
 #include "vk_draw.h"
+#include "mesh_nocull.h"
 
 // (EvilOOT, RX_VK_PTR_DIAG) the pointer pass's counts for this thread's translations
 // (global_memory_to_storage_buffer_pass.cpp, declared by hand so no Eden header changes)
@@ -892,26 +893,29 @@ void oot_visual(Shader::IR::Program& program, uint64_t key) {
              (unsigned long long)key, n);
 }
 
-// (hookshot) RX_VK_MESH_NOCULL=<task shader code key prefixes,...>, off unless set. OoT's meshlet
+// (hookshot) RX_VK_MESH_NOCULL=<task shader code key prefixes,...>. OoT's meshlet
 // culling task shader walks every cell of a coarse depth grid its meshlet covers, reading four words a cell from c3 by a
 // dynamic index: on RDNA 2 one draw runs past the kernel's 10 s and the GPU is reset (Hookshot issue 817). Its answer is
 // visible = (result & 1) | (c3[2320] & 4), bit 4 being the game's own "draw everything". That comparison becomes true,
 // and dead code elimination takes the grid walk with it: every meshlet is drawn (the rasterizer clips what is off
 // screen), none is left out; RX_VK_SKIP_CODE left these programs out instead, and their models with them. The Steam
-// Deck plays with RX_VK_MESH_NOCULL=2c56dc1006942f74 (issue 817). A name under RX_VK_MESH, so the program cache starts
-// again when it changes.
+// Deck plays with RX_VK_MESH_NOCULL=2c56dc1006942f74 (issue 817). On RADV's known affected Navi 23 and Vangogh
+// devices that exact shader is changed by default; =0 restores its culling. A name under RX_VK_MESH, so an explicit
+// setting starts the program cache again when it changes; disk_stamp also includes the automatic decision.
+bool mesh_nocull_affected_radv() {
+    static const bool affected = [] {
+        bool radv = false;
+        VkPhysicalDeviceDriverProperties dp{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+        VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+        p2.pNext = &dp;
+        if (dev.physical) vkGetPhysicalDeviceProperties2(dev.physical, &p2), radv = dp.driverID == VK_DRIVER_ID_MESA_RADV;
+        return mesh_nocull::affected_radv_device(radv, dev.props.deviceName);
+    }();
+    return affected;
+}
+
 bool mesh_nocull_wanted(uint64_t code_key) {
-    static const std::string list = getenv("RX_VK_MESH_NOCULL") ? getenv("RX_VK_MESH_NOCULL") : "";
-    if (list.empty() || list == "0") return false;
-    char hex[24];
-    snprintf(hex, sizeof hex, "%016llx", (unsigned long long)code_key);
-    for (size_t at = 0; at < list.size();) {
-        const size_t e = list.find(',', at);
-        const std::string k = list.substr(at, e == std::string::npos ? std::string::npos : e - at);
-        if (!k.empty() && !strncmp(hex, k.c_str(), k.size())) return true;
-        at = e == std::string::npos ? list.size() : e + 1;
-    }
-    return false;
+    return mesh_nocull::wanted(code_key, getenv("RX_VK_MESH_NOCULL"), mesh_nocull_affected_radv());
 }
 
 bool reads_c3_2320_bit4(const Shader::IR::Value& v) {   // (BitwiseAnd32 of #4 and GetCbufU32 #3, #2320, through Identity)
@@ -955,8 +959,9 @@ void mesh_nocull(Shader::IR::Program& program, uint64_t code_key) {
     if (made) Shader::Optimization::DeadCodeEliminationPass(program);
     static std::atomic<int> told{0};
     if (told++ < 8)
-        logf("vk: task code %016llx: culling %s (RX_VK_MESH_NOCULL)", (unsigned long long)code_key,
-             made ? "off, every meshlet drawn" : "pattern not found, left as it is");
+        logf("vk: task code %016llx: culling %s (RX_VK_MESH_NOCULL%s)", (unsigned long long)code_key,
+             made ? "off, every meshlet drawn" : "pattern not found, left as it is",
+             !getenv("RX_VK_MESH_NOCULL") && mesh_nocull_affected_radv() ? ", automatic for affected RADV GPU" : "");
 }
 
 // ---- (hookshot) The program cache, hookshot_programs.bin beside the executable: what translation made, by the key of the
@@ -1017,6 +1022,8 @@ uint64_t disk_stamp() {
     // (and a GPU's mesh shaders: a file of native task and mesh programs is no use to the compute fallback, nor its to one)
     const uint32_t mesh = (dev.mesh_shader ? 1u : 0u) | (dev.mesh_fallback ? 2u : 0u);
     add(&mesh, sizeof mesh);
+    const uint32_t mesh_nocull_auto = !getenv("RX_VK_MESH_NOCULL") && mesh_nocull_affected_radv();
+    add(&mesh_nocull_auto, sizeof mesh_nocull_auto);
     // (the records keep Shader::Info as it lies in memory: a cache written by another C++ library (the MSVC build's, then the
     // llvm-mingw one's libc++) has other layouts, and reading it crashed at start. The library and the sizes, so it starts again)
     const uint32_t abi[] = {(uint32_t)sizeof(Shader::Info), (uint32_t)sizeof(Program), (uint32_t)sizeof(std::vector<uint32_t>),

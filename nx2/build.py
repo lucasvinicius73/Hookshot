@@ -820,7 +820,8 @@ def main():
         # keeps them)
         stamp = hashlib.sha1(usedforsecurity=False)
         translator = [os.path.join(d, f) for top in ("eden", "sirit", "compat") for d, _, fs in os.walk(os.path.join(vk, top)) for f in fs]
-        for f in sorted(translator) + [os.path.join(vk, n) for n in ("vk_shader.cpp", "vk_bank.cpp", "vk_state.h", "vk_api.h")]:
+        for f in sorted(translator) + [os.path.join(vk, n) for n in
+                                       ("vk_shader.cpp", "vk_bank.cpp", "vk_state.h", "vk_api.h", "mesh_nocull.h")]:
             with open(f, "rb") as src:
                 stamp.update(os.path.relpath(f, vk).replace("\\", "/").encode() + src.read().replace(bytes((13, 10)), bytes((10,))))
         shader_stamp = "-DHOOKSHOT_SHADER_STAMP=0x%sull" % stamp.hexdigest()[:16]
@@ -1043,4 +1044,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

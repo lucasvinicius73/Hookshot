@@ -47,6 +47,7 @@ class ShaderStampCacheTests(unittest.TestCase):
             "gpu/vk/vk_menu.cpp": "int menu;\n",
             "gpu/vk/vk_state.h": "struct State {};\n",
             "gpu/vk/vk_api.h": "struct Api {};\n",
+            "gpu/vk/mesh_nocull.h": "inline bool mesh_nocull() { return true; }\n",
             "gpu/vk/vk_dlss.cpp": "int dlss;\n",
             "gpu/vk/vk_ngx_msvc_rt.cpp": "int msvc_rt;\n",
             "host/mingw_msvc_shims.c": "int shims;\n",
@@ -127,6 +128,18 @@ class ShaderStampCacheTests(unittest.TestCase):
                 path.write_bytes(b"int bank_changed;\n")
                 self.assertEqual(self.changed(before, self.jobs(linux)),
                                  {"gpu/vk/vk_bank.cpp", "gpu/vk/vk_shader.cpp"})
+
+    def test_mesh_nocull_policy_changes_shader_consumer(self):
+        path = self.root / "gpu/vk/mesh_nocull.h"
+        for linux in (False, True):
+            with self.subTest(linux=linux):
+                path.write_bytes(b"inline bool mesh_nocull() { return true; }\n")
+                before = self.jobs(linux)
+                path.write_bytes(b"inline bool mesh_nocull() { return false; }\n")
+                # Root Vulkan headers are shared by the renderer, but Eden/Sirit and POSIX have their own dependency groups;
+                # the shader object additionally receives a new stamp.
+                expected = {name for name in before if not name.startswith(("gpu/vk/eden/", "gpu/vk/sirit/", "host/posix/"))}
+                self.assertEqual(self.changed(before, self.jobs(linux)), expected)
 
     def test_headers_still_invalidate_the_existing_dependency_groups(self):
         path = self.root / "gpu/vk/eden/ir.h"

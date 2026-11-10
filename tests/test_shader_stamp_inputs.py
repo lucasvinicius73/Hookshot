@@ -20,7 +20,8 @@ assert len(body) == 3, "expected actual hash initialization, translator list and
 code = compile(ast.Module(body=body, type_ignores=[]), str(a.build_script), "exec")
 with tempfile.TemporaryDirectory(prefix="shader-stamp-bank-") as tmp:
     vk = Path(tmp) / "gpu/vk"
-    for rel in ("eden/a.cpp", "sirit/a.cpp", "compat/a.h", "vk_shader.cpp", "vk_bank.cpp", "vk_state.h", "vk_api.h", "vk_draw.cpp"):
+    for rel in ("eden/a.cpp", "sirit/a.cpp", "compat/a.h", "vk_shader.cpp", "vk_bank.cpp", "vk_state.h", "vk_api.h",
+                "mesh_nocull.h", "vk_draw.cpp"):
         f = vk / rel
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_bytes(b"authored input\n")
@@ -36,4 +37,6 @@ with tempfile.TemporaryDirectory(prefix="shader-stamp-bank-") as tmp:
     assert changed != first, "bank-only edit did not invalidate shader stamp"
     (vk / "vk_bank.cpp").write_bytes(b"changed bank semantics\r\n")
     assert stamp() == changed, "existing CRLF normalization changed"
+    (vk / "mesh_nocull.h").write_bytes(b"changed mesh culling policy\n")
+    assert stamp() != changed, "mesh-culling policy did not invalidate shader stamp"
 print("PASS: bank-only edits change actual shader stamp; unrelated renderer source stays excluded")
